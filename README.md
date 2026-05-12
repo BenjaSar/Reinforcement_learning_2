@@ -1,4 +1,6 @@
-﻿# PPO-GAE Agent for Adaptive Traffic Signal Control
+﻿![header](doc/imgs/LogoHeader.png)
+
+# PPO-GAE Agent for Adaptive Traffic Signal Control
 
 **Reinforcement Learning II — TP Final**
 **Algorithm:** Proximal Policy Optimization with Generalized Advantage Estimation. This project is based on [all-rl-algorithms](https://github.com/FareedKhan-dev/all-rl-algorithms/blob/master/08_a2c.ipynb)
@@ -514,3 +516,20 @@ The adapter exposes the same `observation_space` and `action_space` as `MultiInt
 - Schulman et al. (2016). *High-Dimensional Continuous Control Using Generalized Advantage Estimation.* ICLR 2016
 - Mnih et al. (2016). *Asynchronous Methods for Deep Reinforcement Learning.* ICML 2016
 - FareedKhan-dev/all-rl-algorithms — original `8_a2c.ipynb` analyzed in Section 1 of the proposal
+
+### References
+
+* Sutton, R. S., & Barto, A. G. (2018). Reinforcement Learning: An Introduction
+
+* OpenAI Gymnasium documentation: https://gymnasium.farama.org
+
+* PyTorch documentation: https://pytorch.org
+
+
+### Authors
+
+This project was developed as part of the final coursework for Reinforcement Learning II.
+
+Feel free to explore, run, or adapt the code for your own experiments.
+
+![footer](doc/imgs/LogoFooter.png)
