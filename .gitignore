@@ -1,0 +1,15 @@
+# Ignore the checkpoints directory in all subdirectories
+
+/checkpoints/**
+
+# Ignore environment folder of env files
+*.env
+/rl/
+# Ignore the .vscode directory
+.vscode/
+
+# Ignore the python cache files
+__pycache__/
+*.pyc
+
+

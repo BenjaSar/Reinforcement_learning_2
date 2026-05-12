@@ -1,0 +1,20 @@
+﻿# PPO-GAE Traffic Signal Control — Dependencies
+# TP Final: Reinforcement Learning II
+
+# Core RL / numerical
+gymnasium>=0.29.0
+torch>=2.0.0
+numpy>=1.24.0
+
+# Visualization & tracking
+matplotlib>=3.7.0
+tensorboard>=2.14.0
+
+# Optional: Jupyter notebook support
+jupyter>=1.0.0
+ipykernel>=6.0.0
+
+# Optional: SUMO traffic simulator wrapper
+# Requires SUMO installed separately (https://eclipse.dev/sumo/)
+# and SUMO_HOME environment variable set.
+# sumo-rl>=1.4.0

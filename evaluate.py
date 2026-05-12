@@ -1,0 +1,353 @@
+﻿"""
+evaluate.py — Phase 4 entry point
+=====================================
+Multi-seed evaluation and benchmarking.
+
+Usage:
+    python evaluate.py [--n_seeds 5] [--n_eval_episodes 20]
+                       [--a2c_ckpt checkpoints/a2c/a2c_final.pt]
+                       [--ppo_ckpt checkpoints/ppo/ppo_best.pt]
+                       [--device cpu]
+
+Outputs:
+    - results/eval/comparison_table.txt
+    - results/eval/reward_comparison.png
+    - results/eval/queue_comparison.png
+    - results/eval/multi_seed_ppo.png
+"""
+
+import argparse
+import sys
+import os
+import numpy as np
+import torch
+from typing import Dict, List
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from envs.traffic_grid_env import MultiIntersectionEnv
+from models.actor_critic import SharedActorCritic
+from utils.logger import MetricLogger
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description="Evaluate trained agents")
+    p.add_argument("--n_seeds",         type=int, default=5)
+    p.add_argument("--n_eval_episodes", type=int, default=20)
+    p.add_argument("--a2c_ckpt",        type=str,
+                   default="checkpoints/a2c/a2c_final.pt")
+    p.add_argument("--ppo_ckpt",        type=str,
+                   default="checkpoints/ppo/ppo_best.pt")
+    p.add_argument("--device",          type=str, default="cpu")
+    p.add_argument("--demand",          type=float, default=1.0)
+    return p.parse_args()
+
+
+# ---------------------------------------------------------------------------
+# Baselines
+# ---------------------------------------------------------------------------
+
+def random_policy(env: MultiIntersectionEnv, n_episodes: int, seed_offset: int):
+    """Uniform random phase selection."""
+    results = []
+    for ep in range(n_episodes):
+        obs, _ = env.reset(seed=seed_offset + ep)
+        total_r, queues, waitings = 0.0, [], []
+        done = False
+        while not done:
+            action = env.action_space.sample()
+            obs, r, term, trunc, info = env.step(action)
+            total_r += r
+            queues.append(info["mean_queue"])
+            waitings.append(info["mean_waiting"])
+            done = term or trunc
+        results.append({
+            "reward":        total_r,
+            "mean_queue":    float(np.mean(queues)),
+            "mean_waiting":  float(np.mean(waitings)),
+        })
+    return results
+
+
+def fixed_time_policy(env: MultiIntersectionEnv, n_episodes: int, seed_offset: int,
+                      cycle: int = 6):
+    """
+    Fixed-time controller: cycles through phases every `cycle` steps.
+    Mimics a 30s green per phase at 5s/step.
+    """
+    results = []
+    for ep in range(n_episodes):
+        obs, _ = env.reset(seed=seed_offset + ep)
+        total_r, queues, waitings = 0.0, [], []
+        done = False
+        step = 0
+        while not done:
+            # All intersections use the same time-based phase
+            phase = (step // cycle) % 4
+            action = np.full(16, phase, dtype=np.int32)
+            obs, r, term, trunc, info = env.step(action)
+            total_r += r
+            queues.append(info["mean_queue"])
+            waitings.append(info["mean_waiting"])
+            done = term or trunc
+            step += 1
+        results.append({
+            "reward":        total_r,
+            "mean_queue":    float(np.mean(queues)),
+            "mean_waiting":  float(np.mean(waitings)),
+        })
+    return results
+
+
+def actuated_policy(env: MultiIntersectionEnv, n_episodes: int, seed_offset: int,
+                    queue_threshold: float = 0.3):
+    """
+    Simple actuated controller:
+    Stay on current phase unless any queue on non-served lanes exceeds threshold.
+    """
+    results = []
+    for ep in range(n_episodes):
+        obs, _ = env.reset(seed=seed_offset + ep)
+        total_r, queues, waitings = 0.0, [], []
+        done = False
+        current_phases = np.zeros(16, dtype=np.int32)
+        step_in_phase  = np.zeros(16, dtype=np.int32)
+        while not done:
+            action = np.zeros(16, dtype=np.int32)
+            for i in range(16):
+                base = i * 9
+                lane_queues = obs[base: base + 4]   # normalized queue lengths
+                unserved = [j for j in range(4)
+                            if j not in [current_phases[i],
+                                         (current_phases[i] + 1) % 4]]
+                max_unserved = max(lane_queues[j] for j in unserved) if unserved else 0
+                if (step_in_phase[i] >= 5 and max_unserved > queue_threshold):
+                    current_phases[i] = (current_phases[i] + 1) % 4
+                    step_in_phase[i] = 0
+                action[i] = current_phases[i]
+                step_in_phase[i] += 1
+
+            obs, r, term, trunc, info = env.step(action)
+            total_r += r
+            queues.append(info["mean_queue"])
+            waitings.append(info["mean_waiting"])
+            done = term or trunc
+        results.append({
+            "reward":        total_r,
+            "mean_queue":    float(np.mean(queues)),
+            "mean_waiting":  float(np.mean(waitings)),
+        })
+    return results
+
+
+def rl_policy(env, model, n_episodes: int, seed_offset: int, device: str = "cpu"):
+    """Evaluate a trained RL model."""
+    model.eval()
+    dev = torch.device(device)
+    results = []
+    with torch.no_grad():
+        for ep in range(n_episodes):
+            obs_np, _ = env.reset(seed=seed_offset + ep)
+            total_r, queues, waitings = 0.0, [], []
+            done = False
+            while not done:
+                obs_t = torch.tensor(obs_np, dtype=torch.float32,
+                                     device=dev).unsqueeze(0)
+                actions, _, _ = model.act(obs_t)
+                action = actions.squeeze(0).cpu().numpy()
+                obs_np, r, term, trunc, info = env.step(action)
+                total_r += r
+                queues.append(info["mean_queue"])
+                waitings.append(info["mean_waiting"])
+                done = term or trunc
+            results.append({
+                "reward":        total_r,
+                "mean_queue":    float(np.mean(queues)),
+                "mean_waiting":  float(np.mean(waitings)),
+            })
+    model.train()
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Aggregation helpers
+# ---------------------------------------------------------------------------
+
+def aggregate(results: list) -> dict:
+    rewards  = [r["reward"]       for r in results]
+    queues   = [r["mean_queue"]   for r in results]
+    waitings = [r["mean_waiting"] for r in results]
+    return {
+        "mean_reward":   float(np.mean(rewards)),
+        "std_reward":    float(np.std(rewards)),
+        "mean_queue":    float(np.mean(queues)),
+        "mean_waiting":  float(np.mean(waitings)),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Main evaluation
+# ---------------------------------------------------------------------------
+
+def main():
+    args = parse_args()
+    os.makedirs("results/eval", exist_ok=True)
+    device = args.device
+
+    print("=" * 65)
+    print("  Phase 4 — Evaluation & Benchmarking")
+    print("=" * 65)
+
+    env = MultiIntersectionEnv(demand_factor=args.demand)
+
+    # ---- Baselines ----
+    print("\n[Eval] Running baselines...")
+    rand_results    = random_policy(env,   args.n_eval_episodes, seed_offset=1000)
+    fixed_results   = fixed_time_policy(env, args.n_eval_episodes, seed_offset=1000)
+    act_results     = actuated_policy(env, args.n_eval_episodes, seed_offset=1000)
+
+    rand_agg   = aggregate(rand_results)
+    fixed_agg  = aggregate(fixed_results)
+    act_agg    = aggregate(act_results)
+
+    # ---- RL agents ----
+    a2c_agg = None
+    ppo_agg = None
+
+    a2c_model = SharedActorCritic()
+    if os.path.exists(args.a2c_ckpt):
+        ckpt = torch.load(args.a2c_ckpt, map_location=device)
+        a2c_model.load_state_dict(ckpt["model_state_dict"])
+        print(f"[Eval] Loaded A2C checkpoint: {args.a2c_ckpt}")
+        a2c_results = rl_policy(env, a2c_model, args.n_eval_episodes,
+                                seed_offset=1000, device=device)
+        a2c_agg = aggregate(a2c_results)
+    else:
+        print(f"[Eval] A2C checkpoint not found: {args.a2c_ckpt} — skipping")
+
+    ppo_model = SharedActorCritic()
+    if os.path.exists(args.ppo_ckpt):
+        ckpt = torch.load(args.ppo_ckpt, map_location=device)
+        ppo_model.load_state_dict(ckpt["model_state_dict"])
+        print(f"[Eval] Loaded PPO checkpoint: {args.ppo_ckpt}")
+        ppo_results = rl_policy(env, ppo_model, args.n_eval_episodes,
+                                seed_offset=1000, device=device)
+        ppo_agg = aggregate(ppo_results)
+    else:
+        print(f"[Eval] PPO checkpoint not found: {args.ppo_ckpt} — skipping")
+
+    # ---- Multi-seed PPO evaluation ----
+    ppo_seed_rewards = []
+    if os.path.exists(args.ppo_ckpt):
+        print(f"\n[Eval] Multi-seed PPO ({args.n_seeds} seeds) ...")
+        for seed in range(args.n_seeds):
+            seed_env = MultiIntersectionEnv(demand_factor=args.demand, seed=seed)
+            sr = rl_policy(seed_env, ppo_model, args.n_eval_episodes,
+                           seed_offset=seed * 100, device=device)
+            ppo_seed_rewards.append([r["reward"] for r in sr])
+            print(f"  Seed {seed}: mean={np.mean([r['reward'] for r in sr]):.3f}")
+        ppo_seed_rewards_arr = np.array(ppo_seed_rewards)
+        print(f"  Multi-seed: {ppo_seed_rewards_arr.mean():.3f} "
+              f"± {ppo_seed_rewards_arr.std():.3f}")
+
+    # ---- Print comparison table ----
+    rows = [
+        ("Random Policy",    rand_agg),
+        ("Fixed-Time",       fixed_agg),
+        ("Actuated",         act_agg),
+        ("A2C (Phase 2)",    a2c_agg),
+        ("PPO-GAE (Phase 3)",ppo_agg),
+    ]
+
+    header = (f"\n{'Policy':<22} {'Mean Reward':>12} {'Std Reward':>11} "
+              f"{'Mean Queue':>11} {'Mean Wait':>10}")
+    separator = "-" * 70
+    lines = [header, separator]
+    for name, agg in rows:
+        if agg is None:
+            lines.append(f"  {name:<20} {'N/A':>12}")
+            continue
+        lines.append(
+            f"  {name:<20} "
+            f"{agg['mean_reward']:>12.4f} "
+            f"{agg['std_reward']:>11.4f} "
+            f"{agg['mean_queue']:>11.4f} "
+            f"{agg['mean_waiting']:>10.4f}"
+        )
+    lines.append(separator)
+    table_str = "\n".join(lines)
+    print(table_str)
+
+    with open("results/eval/comparison_table.txt", "w") as f:
+        f.write(table_str + "\n")
+    print("\n[Eval] Comparison table saved -> results/eval/comparison_table.txt")
+
+    # ---- Comparison bar chart ----
+    _plot_comparison_bar(rows, "results/eval/reward_comparison.png")
+    _plot_comparison_bar(rows, "results/eval/queue_comparison.png",
+                         metric="mean_queue", ylabel="Mean Queue Length")
+
+    if ppo_seed_rewards:
+        _plot_seed_rewards(ppo_seed_rewards, "results/eval/ppo_seed_distribution.png")
+
+    env.close()
+    print("\n[Eval] Phase 4 complete. Results in results/eval/")
+
+
+def _plot_comparison_bar(
+    rows, save_path, metric="mean_reward", ylabel="Mean Episode Reward"
+):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    names  = [r[0] for r in rows if r[1] is not None]
+    values = [r[1][metric] for r in rows if r[1] is not None]
+    errors = [r[1].get("std_reward", 0) if metric == "mean_reward" else 0
+              for r in rows if r[1] is not None]
+
+    colors = ["#d62728" if "Random" in n else
+              "#ff7f0e" if "Fixed"  in n else
+              "#9467bd" if "Actuat" in n else
+              "#1f77b4" if "A2C"    in n else
+              "#2ca02c"
+              for n in names]
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    bars = ax.bar(names, values, color=colors, edgecolor="white",
+                  linewidth=1.2, yerr=errors if metric == "mean_reward" else None,
+                  capsize=5)
+    ax.set_ylabel(ylabel, fontsize=12)
+    ax.set_title("Policy Comparison — " + ylabel, fontsize=13)
+    ax.grid(axis="y", alpha=0.3)
+    plt.xticks(rotation=15, ha="right", fontsize=10)
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path) or ".", exist_ok=True)
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[Eval] Saved {save_path}")
+
+
+def _plot_seed_rewards(seed_rewards, save_path):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    arr = np.array(seed_rewards)
+    fig, ax = plt.subplots(figsize=(8, 4))
+    for i, row in enumerate(arr):
+        ax.scatter([i] * len(row), row, alpha=0.6, s=20)
+    ax.plot(range(len(arr)), arr.mean(axis=1), "r-o", lw=2, label="Mean")
+    ax.set_xlabel("Seed")
+    ax.set_ylabel("Episode Reward")
+    ax.set_title("PPO — Per-Seed Episode Reward Distribution")
+    ax.legend()
+    ax.grid(alpha=0.3)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"[Eval] Saved {save_path}")
+
+
+if __name__ == "__main__":
+    main()
