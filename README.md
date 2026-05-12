@@ -1,7 +1,7 @@
 ﻿# PPO-GAE Agent for Adaptive Traffic Signal Control
 
 **Reinforcement Learning II — TP Final**
-**Algorithm:** Proximal Policy Optimization with Generalized Advantage Estimation
+**Algorithm:** Proximal Policy Optimization with Generalized Advantage Estimation. This project is based on [all-rl-algorithms](https://github.com/FareedKhan-dev/all-rl-algorithms/blob/master/08_a2c.ipynb)
 **Environment:** 4x4 multi-intersection grid (pure Python, no external simulator required)
 
 ---
