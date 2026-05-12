@@ -259,14 +259,25 @@ class A2CTrainer:
     def save(self, path: str):
         import os
         os.makedirs(self.save_dir, exist_ok=True)
-        torch.save({
+        payload = {
             "model_state_dict":     self.model.state_dict(),
             "optimizer_state_dict": self.optimizer.state_dict(),
-        }, path)
+        }
+        # F1 (A2C): persist RunningMeanStd if reward normalization was used
+        if self.reward_normalizer is not None:
+            payload["rms_mean"]  = float(self.reward_normalizer.mean)
+            payload["rms_var"]   = float(self.reward_normalizer.var)
+            payload["rms_count"] = float(self.reward_normalizer.count)
+        torch.save(payload, path)
         print(f"[A2C] Saved checkpoint to {path}")
 
     def load(self, path: str):
         ckpt = torch.load(path, map_location=self.device)
         self.model.load_state_dict(ckpt["model_state_dict"])
         self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        if self.reward_normalizer is not None and "rms_mean" in ckpt:
+            self.reward_normalizer.mean  = float(ckpt["rms_mean"])
+            self.reward_normalizer.var   = float(ckpt["rms_var"])
+            self.reward_normalizer.count = float(ckpt["rms_count"])
         print(f"[A2C] Loaded checkpoint from {path}")
+

@@ -69,6 +69,22 @@ class MetricLogger:
     # ------------------------------------------------------------------
     # ---- Plot helpers (Phase 4) ----
 
+    def _resolve_tag(self, tag: str) -> str:
+        """
+        Case-insensitive key lookup against self._history.
+        Returns the exact stored key if found, otherwise returns tag unchanged.
+        This makes plot_training_curves() robust against capitalisation
+        differences between what callers request and what was logged
+        (e.g. 'p_loss' vs 'P_Loss', 'avg_reward' vs 'Avg_Reward').
+        """
+        if tag in self._history:
+            return tag
+        tag_lower = tag.lower()
+        for stored_key in self._history:
+            if stored_key.lower() == tag_lower:
+                return stored_key
+        return tag   # not found — will produce an empty plot panel
+
     def plot_training_curves(
         self,
         save_path: str,
@@ -80,26 +96,35 @@ class MetricLogger:
 
         Args:
             save_path : output .png file path
-            metrics   : list of metric names to plot (default: all)
+            metrics   : list of metric names to plot (default: all available)
             smooth    : rolling average window size
         """
+        # Default: plot everything that was actually logged
         if metrics is None:
             metrics = list(self._history.keys())
 
-        n = len(metrics)
-        if n == 0:
+        # Resolve requested tags against actual stored keys (case-insensitive)
+        resolved = [self._resolve_tag(m) for m in metrics]
+        # Only keep tags that have data; skip unknown ones silently
+        resolved = [t for t in resolved if len(self._history.get(t, [])) > 0]
+
+        if len(resolved) == 0:
+            print(f"[Logger] WARNING: No matching metrics found in history for {metrics}. "
+                  f"Available keys: {list(self._history.keys())}")
             return
 
+        n    = len(resolved)
         cols = min(3, n)
         rows = (n + cols - 1) // cols
         fig, axes = plt.subplots(rows, cols, figsize=(6 * cols, 4 * rows))
-        axes = np.array(axes).reshape(-1) if n > 1 else [axes]
+        # Ensure axes is always a flat list regardless of grid shape
+        if n == 1:
+            axes = [axes]
+        else:
+            axes = np.array(axes).reshape(-1).tolist()
 
-        for ax, tag in zip(axes, metrics):
-            data = np.array(self._history.get(tag, []))
-            if len(data) == 0:
-                ax.set_visible(False)
-                continue
+        for ax, tag in zip(axes, resolved):
+            data = np.array(self._history[tag], dtype=float)
             x = np.arange(1, len(data) + 1)
             ax.plot(x, data, alpha=0.3, color="steelblue", label="raw")
             if len(data) >= smooth:
@@ -112,7 +137,7 @@ class MetricLogger:
             ax.legend(fontsize=8)
             ax.grid(True, alpha=0.3)
 
-        # Hide unused axes
+        # Hide any surplus axes in the last row
         for ax in axes[n:]:
             ax.set_visible(False)
 

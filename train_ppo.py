@@ -35,22 +35,29 @@ from utils.curriculum import CurriculumScheduler
 
 
 def parse_args():
-    p = argparse.ArgumentParser(description="Train PPO-GAE agent")
+    p = argparse.ArgumentParser(description="Train PPO-GAE agent (v2 fixed)")
     p.add_argument("--n_updates",       type=int,   default=500)
     p.add_argument("--n_steps",         type=int,   default=128)
     p.add_argument("--n_envs",          type=int,   default=16)
     p.add_argument("--gamma",           type=float, default=0.99)
     p.add_argument("--gae_lambda",      type=float, default=0.95)
     p.add_argument("--clip_epsilon",    type=float, default=0.2)
-    p.add_argument("--lr",              type=float, default=3e-4)
+    # A3: separate actor / critic learning rates
+    p.add_argument("--actor_lr",        type=float, default=3e-4)
+    p.add_argument("--critic_lr",       type=float, default=1e-3)
     p.add_argument("--lr_decay",        action="store_true", default=True)
+    p.add_argument("--lr_min_frac",     type=float, default=0.05,
+                   help="LR decay floor as fraction of initial LR (S1)")
     p.add_argument("--c_v",             type=float, default=0.5)
-    p.add_argument("--c_e_start",       type=float, default=0.01)
-    p.add_argument("--c_e_end",         type=float, default=0.001)
+    # A1: higher entropy coefficients
+    p.add_argument("--c_e_start",       type=float, default=0.05)
+    p.add_argument("--c_e_end",         type=float, default=0.01)
     p.add_argument("--n_epochs",        type=int,   default=4)
     p.add_argument("--batch_size",      type=int,   default=256)
     p.add_argument("--grad_clip",       type=float, default=0.5)
     p.add_argument("--kl_target",       type=float, default=0.02)
+    # A4: warmup steps to pre-seed reward normalizer
+    p.add_argument("--warmup_steps",    type=int,   default=512)
     p.add_argument("--device",          type=str,   default="cpu")
     p.add_argument("--seed",            type=int,   default=0)
     p.add_argument("--curriculum",      action="store_true", default=False,
@@ -104,8 +111,10 @@ def main():
         gamma             = args.gamma,
         gae_lambda        = args.gae_lambda,
         clip_epsilon      = args.clip_epsilon,
-        lr                = args.lr,
+        actor_lr          = args.actor_lr,
+        critic_lr         = args.critic_lr,
         lr_decay          = args.lr_decay,
+        lr_min_frac       = args.lr_min_frac,
         c_v               = args.c_v,
         c_e_start         = args.c_e_start,
         c_e_end           = args.c_e_end,
@@ -113,6 +122,7 @@ def main():
         batch_size        = args.batch_size,
         max_grad_norm     = args.grad_clip,
         kl_target         = args.kl_target,
+        warmup_steps      = args.warmup_steps,
         normalize_rewards = not args.no_norm_rewards,
         device            = args.device,
         log_dir           = "results/ppo",
@@ -134,7 +144,7 @@ def main():
     trainer.logger.plot_training_curves(
         save_path = "results/ppo/training_curves.png",
         metrics   = ["p_loss", "v_loss", "entropy", "kl_div",
-                     "grad_norm", "explained_var", "avg_reward"],
+                     "grad_norm", "explained_var", "Avg_Reward", "Raw_Reward"],
         smooth    = 20,
     )
 
@@ -260,3 +270,6 @@ def _train_with_curriculum(trainer, vec_env, curriculum, args):
 
 if __name__ == "__main__":
     main()
+
+
+

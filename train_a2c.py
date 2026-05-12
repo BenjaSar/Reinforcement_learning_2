@@ -143,7 +143,7 @@ def main():
     logger = trainer.logger
     logger.plot_training_curves(
         save_path = "results/a2c/training_curves.png",
-        metrics   = ["p_loss", "v_loss", "entropy", "avg_reward", "avg_len"],
+        metrics   = ["P_Loss", "V_Loss", "Entropy", "Avg_Reward", "Avg_Len"],
         smooth    = 10,
     )
 
