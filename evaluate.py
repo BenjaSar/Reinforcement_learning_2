@@ -1,14 +1,7 @@
 ﻿"""
-evaluate.py — Phase 4 entry point (v2 — fixed)
-================================================
+evaluate.py — Phase 4 entry point
+===================================
 Multi-seed evaluation and benchmarking.
-
-FIXES APPLIED:
-  F1/F2: rl_policy() now accepts an optional RunningMeanStd reward_normalizer
-         that is restored from the checkpoint so normalized-trained policies
-         are evaluated under the same reward scale they were trained with.
-  S3: Default PPO checkpoint changed to ppo_best.pt (which now correctly
-      holds the best real-reward checkpoint thanks to the F3 fix in ppo.py).
 
 Usage:
     python evaluate.py [--n_seeds 5] [--n_eval_episodes 20]
@@ -166,15 +159,14 @@ def rl_policy(
     n_episodes:  int,
     seed_offset: int,
     device:      str = "cpu",
-    rms:         Optional[RunningMeanStd] = None,   # F2: restored normalizer
 ):
     """
-    Evaluate a trained RL model.
+    Evaluate a trained RL model over n_episodes.
 
-    If `rms` is provided (restored from checkpoint), step rewards are
-    normalized by the same running std the policy was trained with, so
-    the value function receives the same scale of observations it expects.
-    The *accumulated raw reward* is still returned for fair comparison.
+    The policy's act() method samples actions from the raw observation
+    (reward normalization is not needed at evaluation time because the
+    value function is not called). Raw accumulated reward is returned
+    for fair comparison against baselines.
     """
     model.eval()
     dev = torch.device(device)
@@ -263,17 +255,15 @@ def main():
     else:
         print(f"\n[Eval] A2C checkpoint not found: {args.a2c_ckpt} — skipping")
 
-    # ---- PPO (with restored RMS normalizer — F1/F2) ----
+    # ---- PPO ----
     ppo_agg   = None
-    ppo_rms   = None
     ppo_model = SharedActorCritic()
     if os.path.exists(args.ppo_ckpt):
         ckpt    = torch.load(args.ppo_ckpt, map_location=device)
         ppo_model.load_state_dict(ckpt["model_state_dict"])
-        ppo_rms = load_rms_from_ckpt(ckpt)   # F2: restore normalizer
         print(f"\n[Eval] Loaded PPO: {args.ppo_ckpt}")
         ppo_results = rl_policy(env, ppo_model, args.n_eval_episodes,
-                                seed_offset=1000, device=device, rms=ppo_rms)
+                                seed_offset=1000, device=device)
         ppo_agg = aggregate(ppo_results)
         print(f"  PPO: {ppo_agg['mean_reward']:.2f} ± {ppo_agg['std_reward']:.2f}")
     else:
@@ -286,7 +276,7 @@ def main():
         for seed in range(args.n_seeds):
             seed_env = MultiIntersectionEnv(demand_factor=args.demand, seed=seed)
             sr = rl_policy(seed_env, ppo_model, args.n_eval_episodes,
-                           seed_offset=seed * 100, device=device, rms=ppo_rms)
+                           seed_offset=seed * 100, device=device)
             seed_env.close()
             ep_rs = [r["reward"] for r in sr]
             ppo_seed_rewards.append(ep_rs)

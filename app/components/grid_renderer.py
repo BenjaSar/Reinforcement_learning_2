@@ -162,4 +162,4 @@ def render_reward_curve(rewards: list[float]) -> go.Figure:
 
 def extract_state(env) -> tuple[np.ndarray, np.ndarray]:
     """Pull (queues, phases) from a MultiIntersectionEnv instance."""
-    return env._queues.copy(), env._current_phase.copy()
+    return env.queues, env.current_phases

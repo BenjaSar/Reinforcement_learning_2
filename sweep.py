@@ -35,7 +35,8 @@ from algorithms.ppo import PPOTrainer
 SWEEP_GRID = {
     "clip_epsilon": [0.1, 0.2, 0.3],
     "gae_lambda":   [0.9, 0.95, 0.99],
-    "lr":           [3e-4, 1e-3],
+    "actor_lr":     [3e-4, 1e-3],
+    "critic_lr":    [1e-3],
 }
 
 
@@ -53,8 +54,8 @@ def parse_args():
 
 def run_config(config: dict, args) -> float:
     """Train for n_updates_sweep and return final avg_reward."""
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    from utils import set_seed
+    set_seed(args.seed)
 
     vec_env = make_vec_env(
         n_envs    = args.n_envs,
@@ -64,7 +65,7 @@ def run_config(config: dict, args) -> float:
 
     log_tag = (f"eps{config['clip_epsilon']}_"
                f"lam{config['gae_lambda']}_"
-               f"lr{config['lr']:.0e}")
+               f"lr{config['actor_lr']:.0e}_{config['critic_lr']:.0e}")
 
     trainer = PPOTrainer(
         env            = vec_env,
@@ -73,7 +74,8 @@ def run_config(config: dict, args) -> float:
         n_updates      = args.n_updates_sweep,
         clip_epsilon   = config["clip_epsilon"],
         gae_lambda     = config["gae_lambda"],
-        lr             = config["lr"],
+        actor_lr       = config["actor_lr"],
+        critic_lr      = config["critic_lr"],
         lr_decay       = False,
         normalize_rewards = True,
         device         = args.device,
@@ -125,12 +127,12 @@ def main():
 
     # Print top 5
     print("\n  Top 5 configurations:")
-    print(f"  {'epsilon':>8} {'lambda':>8} {'lr':>8} {'reward':>12}")
+    print(f"  {'epsilon':>8} {'lambda':>8} {'actor_lr':>10} {'reward':>12}")
     print("  " + "-" * 42)
     for r in results[:5]:
         print(f"  {r['clip_epsilon']:>8.2f} "
               f"{r['gae_lambda']:>8.3f} "
-              f"{r['lr']:>8.1e} "
+              f"{r['actor_lr']:>10.1e} "
               f"{r['final_reward']:>12.4f}")
 
     # Heatmap (epsilon vs lambda, best lr per cell)
