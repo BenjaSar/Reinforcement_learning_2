@@ -24,7 +24,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pytest
+          pip install pytest pytest-timeout
 
       - name: Run unit tests
         run: python -m pytest tests/ -v --tb=short -k "not smoke" --timeout=120

@@ -18,6 +18,10 @@ plotly>=5.18.0
 jupyter>=1.0.0
 ipykernel>=6.0.0
 
+# Testing
+pytest>=8.0.0
+pytest-timeout>=2.3.0
+
 # Optional: SUMO traffic simulator wrapper
 # Requires SUMO installed separately (https://eclipse.dev/sumo/)
 # and SUMO_HOME environment variable set.
