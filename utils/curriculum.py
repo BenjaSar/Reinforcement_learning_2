@@ -84,9 +84,11 @@ class CurriculumScheduler:
         if self._stage >= self.STAGES - 1:
             return False   # Already at final stage
 
-        # Rolling average
-        window_rewards = self._reward_history[-self.window:]
-        rolling_avg = float(np.mean(window_rewards)) if window_rewards else avg_reward
+        # Rolling average (guard: skip if no real episodes have completed)
+        window_rewards = [r for r in self._reward_history[-self.window:] if r != 0.0]
+        if not window_rewards:
+            return False   # No real episode data yet
+        rolling_avg = float(np.mean(window_rewards))
 
         # Advance condition: threshold met OR budget exhausted
         threshold = self.stage_thresholds[self._stage]

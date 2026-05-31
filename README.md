@@ -2,185 +2,213 @@
 
 # PPO-GAE Agent for Adaptive Traffic Signal Control
 
-**Reinforcement Learning II — TP Final**
-**Algorithm:** Proximal Policy Optimization with Generalized Advantage Estimation. This project is based on [all-rl-algorithms](https://github.com/FareedKhan-dev/all-rl-algorithms/blob/master/08_a2c.ipynb)
-**Environment:** 4x4 multi-intersection grid (pure Python, no external simulator required)
+**Reinforcement Learning II — Final Project**
+
+A comparative implementation of **A2C** and **PPO-GAE** on a custom 4×4 multi-intersection traffic grid environment with 144-dimensional state and a factored 16×Discrete(4) action space.
 
 ---
 
-## Overview
+## Project Description
 
-This project implements and compares two actor-critic algorithms — **baseline A2C** and **PPO-GAE** — on an adaptive traffic signal control problem. A centralized agent controls 16 intersections simultaneously, learning to minimize vehicle queue lengths and waiting times across a 4x4 grid.
+This project addresses adaptive traffic signal control in a multi-intersection urban grid using deep reinforcement learning. A centralized agent with a factored multi-head policy controls 16 intersections simultaneously, learning to minimize vehicle queue lengths and waiting times across the network.
 
-The work is structured in five phases following the proposal in `propose_tp_final.md`:
-
-| Phase | Description | Entry Point |
-|-------|-------------|-------------|
-| 1 | Custom traffic environment (144-dim state, 16x Discrete(4) actions) | `envs/traffic_grid_env.py` |
-| 2 | Baseline A2C with n-step returns, single-epoch updates | `train_a2c.py` |
-| 3 | PPO-GAE with 8 algorithmic improvements over A2C | `train_ppo.py` |
-| 4 | Multi-seed evaluation, baseline comparison, hyperparameter sweep | `evaluate.py`, `sweep.py` |
-| 5 | Curriculum learning, TensorBoard, checkpointing, TorchScript export | `train_ppo.py --curriculum` |
+The work is organized in five phases: environment construction, baseline A2C, PPO-GAE with 8 algorithmic improvements, multi-seed evaluation against classical baselines, and curriculum learning with TorchScript deployment export.
 
 ---
 
-## Architecture
+## Features
 
-### Neural Network (SharedActorCritic)
-
-```
-Input: state in R^144 (16 intersections x 9 features)
-       |
-       v
-Linear(144, 256) + ReLU
-       |
-       v
-Linear(256, 256) + ReLU   <-- Shared trunk
-       |
-   +---+---+
-   |       |
-   v       v
-[Actor]  [Critic]
-16 x Linear(256, 4) + Softmax    Linear(256, 128) + ReLU
-= 16 independent Categorical     Linear(128, 1)
-  distributions (one per         = scalar V(s)
-  intersection)
-```
-
-### Environment
-
-| Property | Value |
-|----------|-------|
-| Grid | 4x4 = 16 intersections |
-| Observation dim | 144 (16 intersections x 9 features) |
-| Features per intersection | 4 lane queue lengths + 4-dim phase one-hot + 1 time scalar |
-| Action space | `MultiDiscrete([4] * 16)` |
-| Episode length | 720 steps (~1 simulated hour at 5s/step) |
-| Reward | `r = -(sum_queues / N_lanes) - 0.1 * (sum_waiting / N_lanes)` |
-| Vehicle arrivals | Independent Poisson process per lane |
-| Min green constraint | 5 steps before phase switch is allowed |
-
-### PPO-GAE Loss Function
-
-```
-L = -L_CLIP(theta) + c_v * L_VF - c_e * H(pi_theta)
-
-L_CLIP = E[ min(r_t * A_t, clip(r_t, 1-eps, 1+eps) * A_t) ]
-A_t    = GAE:  sum_{l>=0} (gamma * lambda)^l * delta_{t+l}
-delta_t = r_t + gamma * V(s_{t+1}) - V(s_t)
-c_e    = linear decay from 0.01 to 0.001 over training
-```
+- **Custom 4×4 Traffic Environment** — Pure-Python `MultiIntersectionEnv` with Poisson vehicle arrivals, lane-level queue/waiting tracking, min-green phase constraint, and 720-step episodic horizon (~1 simulated hour at 5 s/step)
+- **Baseline A2C** — Synchronous Advantage Actor-Critic with n-step returns, single-epoch updates, gradient clipping, and optional reward normalization
+- **PPO-GAE with 8 Improvements** — Clipped surrogate objective (ε=0.2), Generalized Advantage Estimation (λ=0.95), RunningMeanStd reward normalization, gradient clipping, entropy coefficient decay (0.05→0.01), K=4 PPO epochs with mini-batching, value function clipping, and separate actor/critic optimizers
+- **Curriculum Learning** — 3-stage demand scaling (30 % → 60 % → 100 %) with callback-based integration
+- **3-Stage Evaluation** — Comparison against Random, Fixed-Time, and Actuated baselines; multi-seed PPO evaluation; hyperparameter grid search over ε, λ, lr
+- **Logging & Visualization** — TensorBoard integration, matplotlib training curves, comparison bar charts, per-seed distribution plots
+- **Streamlit UI** — 5-page interactive dashboard for training, evaluation, live grid simulation, checkpoint comparison, and embedded TensorBoard
+- **Deployment** — TorchScript policy export for inference-only use
+- **Optional SUMO Adapter** — Drop-in `SumoGridEnv` wrapper for the Eclipse SUMO traffic simulator
 
 ---
 
-## Project Structure
+## Repository Structure
 
 ```
 tp_final/
-|
-|-- envs/
-|   |-- traffic_grid_env.py   # MultiIntersectionEnv: 144-dim obs, Poisson arrivals, min-green constraint
-|   |-- sumo_adapter.py       # Optional drop-in SUMO wrapper (requires sumo-rl installed)
-|
-|-- models/
-|   |-- actor_critic.py       # SharedActorCritic: shared trunk + 16 actor heads + scalar critic
-|
-|-- algorithms/
-|   |-- rollout_buffer.py     # RolloutBuffer: stores transitions, computes GAE / n-step returns
-|   |-- a2c.py                # A2CTrainer: baseline A2C (n-step returns, 1 epoch, no clipping)
-|   |-- ppo.py                # PPOTrainer: full PPO-GAE with all 8 improvements
-|
-|-- utils/
-|   |-- running_stats.py      # RunningMeanStd: online reward normalization (Welford algorithm)
-|   |-- curriculum.py         # CurriculumScheduler: 3-stage demand scaling (30% -> 60% -> 100%)
-|   |-- logger.py             # MetricLogger: TensorBoard writer + matplotlib plot helpers
-|
-|-- train_a2c.py              # Phase 2: train baseline A2C
-|-- train_ppo.py              # Phase 3+5: train PPO-GAE (optional --curriculum flag)
-|-- evaluate.py               # Phase 4: evaluate all policies, produce comparison table + plots
-|-- sweep.py                  # Phase 4: grid search over epsilon, lambda, lr
-|-- tp_final_notebook.ipynb   # Summary notebook: all phases in one place
-|-- requirements.txt
-|-- propose_tp_final.md       # Original project proposal
-|
-|-- checkpoints/
-|   |-- a2c/                  # A2C checkpoints (a2c_final.pt)
-|   |-- ppo/                  # PPO checkpoints (ppo_best.pt, ppo_update_N.pt, policy_scripted.pt)
-|
-|-- results/
-    |-- a2c/                  # TensorBoard logs + training_curves.png + history.npy
-    |-- ppo/                  # TensorBoard logs + training_curves.png + history.npy
-    |-- eval/                 # comparison_table.txt + reward_comparison.png + queue_comparison.png
-    |-- sweep/                # sweep_results.csv + sweep_heatmap.png
+│
+├── envs/
+│   ├── traffic_grid_env.py      # MultiIntersectionEnv: 144-dim obs, Poisson arrivals, min-green
+│   └── sumo_adapter.py          # Optional drop-in SUMO wrapper
+│
+├── models/
+│   └── actor_critic.py          # SharedActorCritic: shared trunk → 16 actor heads + critic
+│
+├── algorithms/
+│   ├── base_trainer.py          # ActorCriticTrainer(ABC) + TrainingCallback hook system
+│   ├── rollout_buffer.py        # RolloutBuffer: GAEsment, n-step returns, mini-batch iteration
+│   ├── a2c.py                   # A2CTrainer(ActorCriticTrainer): n-step returns, 1 epoch
+│   └── ppo.py                   # PPOTrainer(ActorCriticTrainer): clipped surrogate, VF clip, separate optimizers
+│
+├── utils/
+│   ├── running_stats.py         # RunningMeanStd: Welford online reward normalization
+│   ├── curriculum.py            # CurriculumScheduler: 3-stage demand scaling
+│   └── logger.py                # MetricLogger: TensorBoard writer + matplotlib plots
+│
+├── app/
+│   ├── streamlit_app.py         # Streamlit entry point
+│   ├── components/
+│   │   ├── model_loader.py      # Checkpoint discovery and loading
+│   │   └── grid_renderer.py     # Plotly 4x4 grid renderer
+│   └── pages/
+│       ├── 1_Train.py           # Launch training from UI
+│       ├── 2_Evaluate.py        # Evaluate checkpoints
+│       ├── 3_Live_Simulation.py # Step-by-step grid animation
+│       ├── 4_Compare.py         # Multi-checkpoint comparison
+│       └── 5_TensorBoard.py     # Embedded TensorBoard viewer
+│
+├── train_a2c.py                 # Phase 2: A2C training entry point
+├── train_ppo.py                 # Phase 3+5: PPO-GAE training (uses callback for curriculum)
+├── evaluate.py                  # Phase 4: multi-seed evaluation and benchmarking
+├── sweep.py                     # Phase 4: hyperparameter grid search
+├── tp_final_notebook.ipynb      # Interactive summary notebook (all 5 phases)
+│
+├── checkpoints/
+│   ├── a2c/                     # A2C checkpoints (a2c_final.pt)
+│   └── ppo/                     # PPO checkpoints (best, periodic, TorchScript)
+│
+├── results/
+│   ├── a2c/                     # A2C TensorBoard logs, training curves, history
+│   ├── ppo/                     # PPO TensorBoard logs, training curves, history
+│   ├── eval/                    # Comparison tables and plots
+│   └── sweep/                   # Sweep CSV and heatmap
+│
+├── requirements.txt
+├── propose_tp_final.md          # Original project proposal
+└── README.md
 ```
 
 ---
 
-## Requirements
+## Installation
 
-**Python:** 3.9 or higher (tested on 3.12)
+### Prerequisites
+- Python 3.9+ (tested on 3.12)
+- PyTorch 2.0+
 
-**Core dependencies:**
-
-```
-gymnasium>=0.29.0
-torch>=2.0.0
-numpy>=1.24.0
-matplotlib>=3.7.0
-tensorboard>=2.14.0
-```
-
-**Optional (Jupyter notebook):**
-
-```
-jupyter>=1.0.0
-ipykernel>=6.0.0
-```
-
-**Optional (SUMO real simulator):**
-
-```
-sumo-rl>=1.4.0
-```
-SUMO also requires the SUMO binary installed separately (see [SUMO section](#optional-sumo-simulator)).
-
----
-
-## Quick Start
-
-### 1. Install dependencies
+### Setup
 
 ```bash
+# Clone the repository
+git clone <repository-url>
+cd tp_final
+
+# Create a virtual environment (recommended)
+python -m venv rl
+source rl/bin/activate        # Linux/Mac
+# .\rl\Scripts\Activate.ps1   # Windows PowerShell
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-### 2. Train PPO-GAE (recommended, full settings)
-
-```bash
-python train_ppo.py --n_updates 500 --n_steps 128 --n_envs 16 --seed 0
-```
-
-### 3. Evaluate and compare against baselines
-
-```bash
-python evaluate.py --n_seeds 5 --n_eval_episodes 20
-```
-
-Results are printed to stdout and saved to `results/eval/`.
+**Core dependencies:** gymnasium, torch, numpy, matplotlib, tensorboard
+**Optional:** streamlit + plotly (UI), jupyter (notebook), sumo-rl (real simulator)
 
 ---
 
 ## Usage
 
-All scripts are run from the project root directory (`tp_final/`).
+All scripts run from the project root (`tp_final/`).
 
-### train_a2c.py — Phase 2: Baseline A2C
-
-Trains the A2C baseline with n-step returns and a single gradient update per rollout.
+### Train A2C Baseline
 
 ```bash
-python train_a2c.py [OPTIONS]
+python train_a2c.py --n_updates 200 --n_steps 128 --n_envs 16 --seed 0 --normalize_rewards
 ```
+
+Output: `results/a2c/training_curves.png`, `checkpoints/a2c/a2c_final.pt`, TensorBoard logs.
+
+### Train PPO-GAE
+
+```bash
+python train_ppo.py --n_updates 500 --n_steps 128 --n_envs 16 --seed 0
+```
+
+Output: Periodic checkpoints (`checkpoints/ppo/ppo_update_N.pt`), best model (`ppo_best.pt`), TorchScript export (`policy_scripted.pt`), training curves, TensorBoard logs.
+
+### Train with Curriculum Learning
+
+```bash
+python train_ppo.py --n_updates 500 --n_steps 128 --n_envs 16 --curriculum --seed 0
+```
+
+Three-stage demand: 30 % → 60 % → 100 %, with reward-threshold-based stage advancement.
+
+### Evaluate Policies
+
+```bash
+python evaluate.py --n_seeds 5 --n_eval_episodes 20
+```
+
+Compares Random, Fixed-Time, Actuated, A2C, and PPO. Saves `results/eval/comparison_table.txt` and comparison plots.
+
+### Hyperparameter Sweep
+
+```bash
+python sweep.py --n_updates_sweep 100 --n_envs 4
+```
+
+Grid search over ε ∈ {0.1, 0.2, 0.3}, λ ∈ {0.9, 0.95, 0.99}, lr_a ∈ {3e-4, 1e-3}, lr_c ∈ {1e-3}. Saves CSV and heatmap to `results/sweep/`.
+
+### Launch Streamlit UI
+
+```bash
+streamlit run app/streamlit_app.py
+```
+
+Interactive dashboard with live grid simulation, training launcher, checkpoint comparison, and embedded TensorBoard.
+
+### Launch TensorBoard
+
+```bash
+tensorboard --logdir results
+```
+
+---
+
+## Architecture Overview
+
+### Agent Flow
+
+1. **Observation** — 144-dim vector: per intersection, 4 normalized queue lengths + 4-dim phase one-hot + 1 normalized time scalar
+2. **Shared Trunk** — Two-layer MLP (144→256→256) with ReLU activations, orthogonal weight initialization
+3. **Multi-Head Actor** — 16 independent linear heads (256→4) producing categorical distributions per intersection
+4. **Critic** — Two-layer MLP (256→128→1) producing scalar state-value V(s)
+5. **Action Selection** — Independent categorical sampling per intersection → 16-dim discrete action
+
+### Training Pipeline (PPO, one iteration)
+
+1. **Warmup** (first update only) — 512 random-action steps seed the reward normalizer via RunningMeanStd
+2. **Rollout Collection** — Run current policy π_θ for N=128 steps across E=16 vectorized envs → collect (s, a, r, log π, V(s), done) tuples
+3. **Bootstrap + GAE** — δ_t = r_t + γV(s_{t+1}) − V(s_t); Â_t = Σ_{l≥0} (γλ)^l δ_{t+l}
+4. **Advantage Normalization** — Standardize Â_t to zero mean, unit variance
+5. **PPO Update (K=4 epochs)** — For each mini-batch: compute clipped surrogate policy loss, value function clipping, separate actor/critic optimizer steps, entropy bonus, KL-based early stopping
+6. **LR Decay** — Linear schedule to 5 % of initial value
+7. **Logging & Checkpointing** — TensorBoard metrics, periodic .pt saves, best-model tracking on raw reward
+
+### Architecture: Clean Layer Separation
+
+| Layer | Directory | Responsibility | Dependency Direction |
+|-------|-----------|----------------|---------------------|
+| **Domain** | `models/`, `algorithms/base_trainer.py` | Core RL abstractions: Agent, Policy, Environment interfaces | — |
+| **Application** | `algorithms/a2c.py`, `algorithms/ppo.py` | Training orchestration, loss computation, checkpointing | → Domain |
+| **Infrastructure** | `envs/`, `utils/`, `app/components/` | Gym wrappers, logging backends, storage | → Application |
+| **Interface** | `train_a2c.py`, `train_ppo.py`, `app/` | CLI parsers, Streamlit UI, notebook | → All layers |
+
+---
+
+## CLI Reference
+
+### train_a2c.py
 
 | Argument | Default | Description |
 |----------|---------|-------------|
@@ -194,29 +222,10 @@ python train_a2c.py [OPTIONS]
 | `--grad_clip` | `0.5` | Gradient clipping max norm |
 | `--demand` | `1.0` | Traffic demand factor [0.0, 1.0] |
 | `--seed` | `0` | Random seed |
-| `--device` | `cpu` | Torch device (`cpu` or `cuda`) |
+| `--device` | `cpu` | Torch device |
 | `--normalize_rewards` | off | Enable reward normalization |
 
-**Outputs:**
-- `results/a2c/training_curves.png` — P_Loss, V_Loss, Entropy, Avg Reward plots
-- `results/a2c/history.npy` — Training metrics array
-- `results/a2c/events.out.tfevents.*` — TensorBoard logs
-- `checkpoints/a2c/a2c_final.pt` — Final model checkpoint
-
-**Example (fast demo run):**
-```bash
-python train_a2c.py --n_updates 50 --n_steps 64 --n_envs 4
-```
-
----
-
-### train_ppo.py — Phase 3+5: PPO-GAE
-
-Trains the full PPO agent with GAE, reward normalization, entropy decay, and optional curriculum learning.
-
-```bash
-python train_ppo.py [OPTIONS]
-```
+### train_ppo.py
 
 | Argument | Default | Description |
 |----------|---------|-------------|
@@ -226,253 +235,164 @@ python train_ppo.py [OPTIONS]
 | `--gamma` | `0.99` | Discount factor |
 | `--gae_lambda` | `0.95` | GAE lambda (bias-variance tradeoff) |
 | `--clip_epsilon` | `0.2` | PPO clipping threshold |
-| `--lr` | `3e-4` | Adam initial learning rate |
-| `--lr_decay` | on | Linear LR decay to 0 over training |
+| `--actor_lr` | `3e-4` | Actor (policy) Adam learning rate |
+| `--critic_lr` | `1e-3` | Critic (value) Adam learning rate |
+| `--lr_decay` | on | Linear LR decay to 5 % of initial |
+| `--lr_min_frac` | `0.05` | LR decay floor fraction |
 | `--c_v` | `0.5` | Value loss coefficient |
-| `--c_e_start` | `0.01` | Initial entropy coefficient |
-| `--c_e_end` | `0.001` | Final entropy coefficient (linear decay) |
+| `--c_e_start` | `0.05` | Initial entropy coefficient |
+| `--c_e_end` | `0.01` | Final entropy coefficient (linear decay) |
 | `--n_epochs` | `4` | PPO update epochs per rollout (K) |
 | `--batch_size` | `256` | Mini-batch size within PPO update |
 | `--grad_clip` | `0.5` | Gradient clipping max norm |
 | `--kl_target` | `0.02` | Approx KL threshold for early epoch stopping |
+| `--warmup_steps` | `512` | Random steps to seed reward normalizer |
 | `--save_freq` | `50` | Checkpoint every N updates |
 | `--curriculum` | off | Enable 3-stage curriculum learning |
 | `--no_norm_rewards` | off | Disable reward normalization |
 | `--seed` | `0` | Random seed |
-| `--device` | `cpu` | Torch device (`cpu` or `cuda`) |
+| `--device` | `cpu` | Torch device |
 
-**Outputs:**
-- `results/ppo/training_curves.png` — 6-panel metrics plot
-- `results/ppo/history.npy` — Training metrics array
-- `results/ppo/events.out.tfevents.*` — TensorBoard logs
-- `checkpoints/ppo/ppo_best.pt` — Best model by avg reward
-- `checkpoints/ppo/ppo_update_N.pt` — Periodic checkpoints (every `--save_freq` updates)
-- `checkpoints/ppo/policy_scripted.pt` — TorchScript export of the value function
-
-**Example (full training with curriculum):**
-```bash
-python train_ppo.py --n_updates 500 --n_steps 128 --n_envs 16 --curriculum --seed 0
-```
-
-**Example (fast demo run):**
-```bash
-python train_ppo.py --n_updates 50 --n_steps 64 --n_envs 4 --batch_size 128
-```
-
----
-
-### evaluate.py — Phase 4: Evaluation and Benchmarking
-
-Evaluates all trained policies against five baselines and generates comparison plots.
-
-```bash
-python evaluate.py [OPTIONS]
-```
+### evaluate.py
 
 | Argument | Default | Description |
 |----------|---------|-------------|
-| `--n_seeds` | `5` | Number of independent seeds for PPO multi-seed eval |
+| `--n_seeds` | `5` | Number of independent seeds for multi-seed eval |
 | `--n_eval_episodes` | `20` | Episodes per policy per evaluation |
 | `--a2c_ckpt` | `checkpoints/a2c/a2c_final.pt` | Path to A2C checkpoint |
 | `--ppo_ckpt` | `checkpoints/ppo/ppo_best.pt` | Path to PPO checkpoint |
 | `--demand` | `1.0` | Traffic demand factor for evaluation |
 | `--device` | `cpu` | Torch device |
 
-**Evaluated policies:**
-
-| Policy | Description |
-|--------|-------------|
-| Random | Uniform random phase selection |
-| Fixed-Time | Cycle through all phases every 6 steps (30s green equivalent) |
-| Actuated | Extend green if unserved queue exceeds threshold |
-| A2C (Phase 2) | Trained A2C baseline |
-| PPO-GAE (Phase 3) | Trained PPO agent |
-
-**Outputs:**
-- `results/eval/comparison_table.txt` — Mean reward, std, queue, waiting time per policy
-- `results/eval/reward_comparison.png` — Bar chart with error bars
-- `results/eval/queue_comparison.png` — Mean queue length comparison
-- `results/eval/ppo_seed_distribution.png` — Per-seed reward scatter plot
-
 ---
 
-### sweep.py — Phase 4: Hyperparameter Sweep
+## RL Methodology
 
-Runs a grid search over PPO clip epsilon, GAE lambda, and learning rate.
+### Algorithms
 
-```bash
-python sweep.py [OPTIONS]
+| Algorithm | Advantage Estimation | Policy Update | Key Features |
+|-----------|---------------------|---------------|--------------|
+| **A2C** | n-step returns | Single full-batch gradient step | Static entropy (c_e=0.01), single optimizer |
+| **PPO-GAE** | GAE (λ=0.95) | Clipped surrogate, K=4 epochs, mini-batches | Entropy decay (0.05→0.01), separate optimizers, VF clip, KL early-stop |
+
+### Reward Strategy
+
+```
+r_t = -( Σ queue_length(i) / N_lanes ) - 0.1 × ( Σ waiting_time(i) / N_lanes )
 ```
 
-| Argument | Default | Description |
-|----------|---------|-------------|
-| `--n_updates_sweep` | `100` | Training updates per configuration |
-| `--n_steps` | `64` | Rollout steps (reduced for sweep speed) |
-| `--n_envs` | `4` | Parallel environments |
-| `--seed` | `42` | Random seed |
-| `--device` | `cpu` | Torch device |
+Rewards are normalized by a running estimate of standard deviation (Welford's algorithm) to stabilize critic learning. Raw (un-normalized) rewards are tracked separately for evaluation comparison.
 
-**Search grid:**
+### Exploration
 
-| Hyperparameter | Values searched |
-|----------------|-----------------|
-| `clip_epsilon` (ε) | {0.1, 0.2, 0.3} |
-| `gae_lambda` (λ) | {0.90, 0.95, 0.99} |
-| `lr` | {3e-4, 1e-3} |
+- **Entropy regularization** with linear decay (0.05 → 0.01) encourages broad phase exploration early and policy commitment late
+- **Curriculum learning** (optional) starts at 30 % traffic demand, giving the agent a simpler learning task before facing peak congestion
 
-Total configurations: 3 x 3 x 2 = **18 runs**
+### Optimization
 
-**Outputs:**
-- `results/sweep/sweep_results.csv` — All configurations ranked by final reward
-- `results/sweep/sweep_heatmap.png` — ε vs λ heatmap (best lr per cell)
+- **PPO clipped surrogate** prevents destructively large policy updates
+- **Value function clipping** mirrors PPO's clipping for the critic, bounding per-mini-batch value updates
+- **Separate optimizers** (actor lr=3e-4, critic lr=1e-3) let the critic converge faster without dominating the actor gradient
+- **LR decay with floor** (5 % of initial) avoids complete learning rate shutdown
+- **KL early stopping** per epoch (threshold=0.02) prevents overfitting on stale data
 
 ---
 
-### tp_final_notebook.ipynb — Summary Notebook
+## Results & Metrics
 
-Runs all five phases interactively with inline plots and explanations.
+### Best Known Results (20 episodes, demand=1.0, raw reward)
 
-```bash
-jupyter notebook tp_final_notebook.ipynb
-```
+| Policy | Mean Reward | ±Std | Mean Queue | Mean Waiting |
+|--------|------------|------|------------|-------------|
+| Random | −925.5 | 19.4 | 1.015 | 2.70 |
+| Fixed-Time | −1008.8 | 12.9 | 1.116 | 2.85 |
+| Actuated | −1879.5 | 10.3 | 1.925 | 6.86 |
+| A2C (200 updates) | −2539.9 | 303.6 | 1.951 | 15.77 |
+| **PPO-GAE fixed (500 updates, seed 0)** | **−534.6** | **5.3** | **0.616** | **1.26** |
+| PPO-GAE curriculum (500 updates, seed 123) | −587.0 | 14.7 | 0.674 | 1.46 |
 
-The notebook uses reduced settings (50 A2C updates, 100 PPO updates, 4 envs) for fast execution. For full-scale training use the scripts above.
+PPO-GAE achieves a **42 % improvement over the Random baseline** at 500 updates. The curriculum variant trails slightly (−587 vs −535) because it only had 200 updates at 100% demand (300 updates were spent at 30%/60% demand). With more updates at full demand, curriculum would likely surpass fixed-demand PPO.
 
----
+### Multi-Seed Robustness (3 seeds × 200 updates)
 
-## Hyperparameter Reference
+| Variant | Mean ± Std | Seed 0 | Seed 1 | Seed 2 |
+|---------|-----------|--------|--------|--------|
+| Fixed-demand PPO | −830.1 ± 8.5 | −819.9 | −840.8 | −829.5 |
+| Curriculum PPO | −852.2 ± 7.0 | −858.2 | −855.9 | −842.4 |
 
-| Hyperparameter | Symbol | Default | Recommended Range | Notes |
-|----------------|--------|---------|-------------------|-------|
-| Discount factor | γ | 0.99 | 0.97–0.99 | Higher for long signal cycles |
-| GAE lambda | λ | 0.95 | 0.90–0.99 | Bias-variance tradeoff |
-| PPO clip threshold | ε | 0.2 | 0.1–0.3 | Reduce if policy oscillates |
-| Learning rate | lr | 3e-4 | 3e-4–1e-3 | Decayed linearly to 0 |
-| Value loss coeff | c_v | 0.5 | 0.5–1.0 | Increase to 1.0 early if critic diverges |
-| Entropy coeff (start) | c_e | 0.01 | 0.01–0.05 | Higher = more early exploration |
-| Entropy coeff (end) | c_e | 0.001 | 0.0001–0.005 | Annealed linearly |
-| Rollout length | N | 128 | 64–512 | Per environment per update |
-| PPO epochs per update | K | 4 | 4–10 | Monitor KL; stop early if KL > 0.02 |
-| Mini-batch size | B | 256 | 128–512 | Total batch = N * n_envs |
-| Gradient clip norm | — | 0.5 | 0.5–1.0 | Prevents actor/critic divergence |
-| KL early stop threshold | — | 0.02 | 0.01–0.05 | Per-epoch stopping criterion |
+Low inter-seed variance (σ < 10) confirms training is stable across seeds. Curriculum trails at 200 updates because it only reaches stage 2 (60% demand) by then.
 
----
+### Hyperparameter Sweep (100 updates × 4 envs)
 
-## Improvements Over Baseline A2C
+Top configurations (sorted by final avg reward):
 
-Each improvement directly addresses a limitation identified in Section 2 of the proposal.
+| ε (clip) | λ (GAE) | Actor LR | Final Reward |
+|----------|---------|----------|-------------|
+| 0.3 | 0.99 | 1e-3 | −3302 |
+| 0.3 | 0.95 | 1e-3 | −3491 |
+| 0.3 | 0.99 | 3e-4 | −3617 |
+| 0.2 | 0.99 | 3e-4 | −3763 |
+| 0.3 | 0.90 | 1e-3 | −3807 |
 
-| # | Improvement | Implementation | Limitation Addressed |
-|---|-------------|----------------|----------------------|
-| 1 | **PPO clipped surrogate** (ε=0.2) | `algorithms/ppo.py:_ppo_update()` | Unbounded policy updates / collapse |
-| 2 | **GAE** (λ=0.95) | `algorithms/rollout_buffer.py:compute_gae()` | High advantage variance (n-step returns) |
-| 3 | **Reward normalization** (RunningMeanStd) | `utils/running_stats.py` | High early V_Loss (critic overwhelmed) |
-| 4 | **Gradient clipping** (max_norm=0.5) | `algorithms/ppo.py:_ppo_update()` | Actor/critic gradient explosion |
-| 5 | **Entropy coefficient decay** (0.01 → 0.001) | `algorithms/ppo.py:_get_entropy_coeff()` | Static entropy over-suppresses late policy |
-| 6 | **K=4 PPO epochs** per rollout | `algorithms/ppo.py:_ppo_update()` | Sample inefficiency (1 update per rollout) |
-| 7 | **Vectorized environments** (16 parallel) | `envs/traffic_grid_env.py:make_vec_env()` | Single-worker throughput bottleneck |
-| 8 | **Curriculum learning** (30%→60%→100%) | `utils/curriculum.py` | Cold-start on high-complexity environment |
+**Key takeaways:**
+- Higher `actor_lr` (1e-3) wins in 4 of top 5 slots — current default of 3e-4 is conservative
+- Higher λ (0.99) dominates the leaderboard — long-horizon advantage estimation helps
+- Higher ε (0.3) appears in 4 of top 5 — more conservative clipping tolerates larger policy updates
+
+All sweep runs degrade from ~−270 early to ~−3300+ final over 100 updates, indicating longer training is needed for convergence.
 
 ---
 
 ## Monitoring with TensorBoard
 
-After running any training script, launch TensorBoard from the project root:
-
 ```bash
 tensorboard --logdir results
 ```
-
-Then open `http://localhost:6006` in a browser.
 
 **Available metrics:**
 
 | Tag | Description | Target |
 |-----|-------------|--------|
 | `PPO/p_loss` | Clipped policy loss L^CLIP | Stable, near zero |
-| `PPO/v_loss` | Value loss L^VF | Decreasing monotonically after early transient |
+| `PPO/v_loss` | Value loss L^VF | Decreasing monotonically |
 | `PPO/entropy` | Policy entropy H(π) | Gradual decrease; flag if < 0.1 |
 | `PPO/kl_div` | Approximate KL divergence | Should stay below 0.02 |
 | `PPO/grad_norm` | Gradient norm (before clipping) | Flag if consistently > 2.0 |
 | `PPO/explained_var` | Explained variance of value function | Should approach 1.0 |
-| `PPO/Avg_Reward` | Rolling episode reward | Should increase over training |
+| `PPO/Avg_Reward` | Rolling episode reward (normalized) | Should increase over training |
+| `PPO/Raw_Reward` | Rolling episode reward (raw, un-normalized) | For fair evaluation comparison |
 | `PPO/Entropy_Coeff` | Current c_e value | Decreasing linearly |
-| `PPO/LR` | Current learning rate | Decreasing linearly |
+| `PPO/Actor_LR` / `PPO/Critic_LR` | Current learning rates | Decreasing linearly |
 | `A2C/P_Loss` | A2C policy gradient loss | — |
 | `A2C/V_Loss` | A2C value loss | — |
 | `A2C/Entropy` | A2C policy entropy | — |
 
 ---
 
-## Generated Outputs Summary
-
-```
-results/
-  a2c/
-    training_curves.png     -- P_Loss, V_Loss, Entropy, Avg Reward, Avg Len
-    history.npy             -- Loadable dict of metric lists
-    events.out.tfevents.*   -- TensorBoard log file
-  ppo/
-    training_curves.png     -- 6-panel: P_Loss, V_Loss, Entropy, KL, ExplVar, Avg Reward
-    history.npy
-    events.out.tfevents.*
-  eval/
-    comparison_table.txt    -- Policy vs. mean reward / std / queue / waiting
-    reward_comparison.png   -- Bar chart comparison
-    queue_comparison.png    -- Queue length bar chart
-    ppo_seed_distribution.png -- Per-seed scatter plot
-  sweep/
-    sweep_results.csv       -- Ranked configurations
-    sweep_heatmap.png       -- epsilon x lambda heatmap
-
-checkpoints/
-  a2c/
-    a2c_final.pt            -- Final A2C weights + optimizer state
-  ppo/
-    ppo_best.pt             -- Best PPO model by rolling avg reward
-    ppo_update_N.pt         -- Periodic checkpoints (every --save_freq updates)
-    policy_scripted.pt      -- TorchScript export (inference-only deployment)
-```
-
-**Loading a checkpoint:**
-
-```python
-import torch
-from models.actor_critic import SharedActorCritic
-
-model = SharedActorCritic()
-ckpt = torch.load("checkpoints/ppo/ppo_best.pt", map_location="cpu")
-model.load_state_dict(ckpt["model_state_dict"])
-model.eval()
-```
-
-**Loading the TorchScript export (no model code needed):**
-
-```python
-import torch
-policy = torch.jit.load("checkpoints/ppo/policy_scripted.pt")
-value = policy.get_value(torch.zeros(1, 144))
-```
-
----
-
 ## Reproducibility
 
-All scripts accept a `--seed` argument that seeds both NumPy and PyTorch.
+All scripts accept a `--seed` argument that seeds NumPy, PyTorch, and the environment's internal RNG.
 
 ```bash
 # Reproduce the exact training run
 python train_ppo.py --seed 42 --n_updates 500 --n_steps 128 --n_envs 16
+
+# Multi-seed evaluation
+python multi_seed.py --n_updates 200 --seeds 0 1 2
+
+# Hyperparameter sweep
+python sweep.py --n_updates_sweep 100 --n_envs 4
 ```
+
+**Experiment manifests**: Each training run saves a JSON manifest to `results/*/manifests/` containing the full config, seed, timestamp, git commit, and final metrics for full reproducibility.
 
 **Pinned versions used during development:**
 
 ```
-Python    3.12
-gymnasium 0.29.x
-torch     2.x
-numpy     2.x
+Python     3.12
+gymnasium  0.29.x
+torch      2.x
+numpy      2.x
 matplotlib 3.x
 tensorboard 2.x
 ```
@@ -481,21 +401,18 @@ tensorboard 2.x
 
 ## Optional: SUMO Simulator
 
-The project uses a self-contained pure-Python environment by default. To use the real SUMO traffic simulator:
+The project uses a self-contained pure-Python environment by default. To use the Eclipse SUMO traffic simulator:
 
 **Step 1 — Install SUMO:**
-
-- Windows: download the `.msi` installer from https://eclipse.dev/sumo/
+- Windows: download the `.msi` installer from [eclipse.dev/sumo](https://eclipse.dev/sumo/)
 - Set the `SUMO_HOME` environment variable to the SUMO installation directory
 
 **Step 2 — Install the Python wrapper:**
-
 ```bash
 pip install sumo-rl
 ```
 
 **Step 3 — Swap the environment:**
-
 ```python
 from envs.sumo_adapter import SumoGridEnv
 
@@ -508,6 +425,59 @@ env = SumoGridEnv(
 
 The adapter exposes the same `observation_space` and `action_space` as `MultiIntersectionEnv`, so all training scripts work without modification.
 
+Custom route files at multiple demand levels (0.3, 0.6, 1.0) can be generated:
+
+```bash
+python sumo/generate_routes.py --demand 0.6 --output_dir sumo/routes
+```
+
+### Cross-Validation Results
+
+Evaluation of a PPO policy (trained purely in the Python simulator) transferred to SUMO:
+
+| Demand | Python | SUMO | Delta |
+|--------|--------|------|-------|
+| 0.3 | −68.1 ± 13.2 | −157.8 ± 0.1 | −89.6 |
+| 0.6 | −124.2 ± 19.3 | −237.6 ± 0.3 | −113.3 |
+| 1.0 | −209.9 ± 33.6 | −355.0 ± 0.4 | −145.1 |
+
+The policy qualitatively transfers (all phases active, vehicles handled), but absolute rewards differ due to:
+- **Traffic dynamics**: SUMO models 3-lane approaches with car-following, lane-changing; Python is single-lane Poisson
+- **Reward scale**: SUMO agent rewards use different normalization than the Python env's queue+waiting penalty
+- **Observation mapping**: 8-phase/12-lane SUMO intersection mapped to 4-phase/4-lane Python format
+
+The delta grows with demand (more vehicles ⇒ more dynamics differences), confirming the policy learned the right behavioral patterns but in a simplified dynamics model.
+
+---
+
+## Future Improvements
+
+1. **Complete hyperparameter sweep** — Re-run `sweep.py` under the refactored trainer to validate optimal ε/λ/lr configuration
+2. **Multi-seed PPO training** — Run 5 independent seeds end-to-end for statistical significance
+3. **Increase rollout length** — Test N=512 (vs current 128) for improved GAE advantage estimation
+4. **Train directly in SUMO** — Train PPO within the `SumoGridEnv` adapter (already compatible) and compare performance
+5. **End-to-end tests** — Add GitHub Actions timing test that runs full 500-update PPO training
+6. **Experiment dashboard** — Aggregate all manifest.json results into a single Streamlit comparison view
+
+---
+
+## Contributing
+
+Contributions are welcome. Please follow these guidelines:
+
+1. **Open an issue** to discuss proposed changes before submitting a PR
+2. **Maintain the existing modular structure** — new algorithms go in `algorithms/`, new utilities in `utils/`
+3. **Extend the base class** — new on-policy algorithms should extend `ActorCriticTrainer` from `algorithms/base_trainer.py`
+4. **Add tests** for new components in the `tests/` directory
+5. **Update the README** if you add or modify entry points or change default hyperparameters
+6. **Preserve reproducibility** — all training scripts must accept a `--seed` argument
+
+---
+
+## License
+
+Not specified in repository.
+
 ---
 
 ## References
@@ -515,21 +485,9 @@ The adapter exposes the same `observation_space` and `action_space` as `MultiInt
 - Schulman et al. (2017). *Proximal Policy Optimization Algorithms.* arXiv:1707.06347
 - Schulman et al. (2016). *High-Dimensional Continuous Control Using Generalized Advantage Estimation.* ICLR 2016
 - Mnih et al. (2016). *Asynchronous Methods for Deep Reinforcement Learning.* ICML 2016
-- FareedKhan-dev/all-rl-algorithms — original `8_a2c.ipynb` analyzed in Section 1 of the proposal
+- Sutton & Barto (2018). *Reinforcement Learning: An Introduction*
+- FareedKhan-dev/all-rl-algorithms — Reference A2C notebook analyzed in project proposal
 
-### References
-
-* Sutton, R. S., & Barto, A. G. (2018). Reinforcement Learning: An Introduction
-
-* OpenAI Gymnasium documentation: https://gymnasium.farama.org
-
-* PyTorch documentation: https://pytorch.org
-
-
-### Authors
-
-This project was developed as part of the final coursework for Reinforcement Learning II.
-
-Feel free to explore, run, or adapt the code for your own experiments.
+---
 
 ![footer](doc/imgs/LogoFooter.png)

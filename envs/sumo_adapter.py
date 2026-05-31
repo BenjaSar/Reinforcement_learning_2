@@ -15,9 +15,52 @@ import gymnasium as gym
 
 try:
     import sumo_rl  # noqa: F401
+    from sumo_rl.environment.observations import ObservationFunction
+    from gymnasium import spaces
     _SUMO_AVAILABLE = True
 except ImportError:
+    ObservationFunction = object
+    spaces = None
     _SUMO_AVAILABLE = False
+
+
+class MatchingObservationFunction(ObservationFunction):
+    """Produces 9-dim observation per agent matching MultiIntersectionEnv format.
+
+    Pure-Python env format per intersection (9 values):
+        queue_approach[0..3]  — normalized queue per approach direction
+        phase_onehot[0..3]    — one-hot of current phase (0–3)
+        phase_duration        — fraction of max duration elapsed
+    """
+
+    def __init__(self, ts):
+        super().__init__(ts)
+        self._max_queue = 20.0
+        self._max_duration = 60.0
+
+    def __call__(self):
+        ts = self.ts
+        # --- Queue: average 3 lanes per approach, normalize ---
+        n_per = 3
+        raw_q = ts.get_lanes_queue()
+        queues = []
+        for i in range(0, len(raw_q), n_per):
+            queues.append(min(sum(raw_q[i:i + n_per]) / n_per, 1.0))
+
+        # --- Phase: map 8 green phases -> 4 phases ---
+        gp = ts.green_phase  # 0..7
+        phase_idx = gp // 2  # 0,1,2,3
+        phase_onehot = [0.0, 0.0, 0.0, 0.0]
+        phase_onehot[phase_idx] = 1.0
+
+        # --- Phase duration ---
+        dur = min(ts.time_since_last_phase_change / self._max_duration, 1.0)
+
+        obs = np.array(queues + phase_onehot + [dur], dtype=np.float32)
+        return obs
+
+    def observation_space(self):
+        return spaces.Box(low=0.0, high=1.0, shape=(9,), dtype=np.float32)
 
 
 class SumoGridEnv(gym.Env):
@@ -25,10 +68,6 @@ class SumoGridEnv(gym.Env):
     Thin adapter wrapping sumo_rl.parallel_env into a single-agent
     gymnasium.Env with the same 144-dim observation / MultiDiscrete(4^16)
     action interface as MultiIntersectionEnv.
-
-    Requires:
-        pip install sumo-rl
-        SUMO_HOME environment variable set to SUMO installation directory.
     """
 
     N_INTERSECTIONS = 16
@@ -60,10 +99,10 @@ class SumoGridEnv(gym.Env):
             delta_time=delta_time,
             yellow_time=yellow_time,
             min_green=min_green,
+            observation_class=MatchingObservationFunction,
         )
         self._agents = None
 
-        # Mirror the same spaces as MultiIntersectionEnv
         self.observation_space = gym.spaces.Box(
             low=0.0, high=1.0, shape=(144,), dtype=np.float32
         )
@@ -71,10 +110,13 @@ class SumoGridEnv(gym.Env):
             [self.N_PHASES] * self.N_INTERSECTIONS
         )
 
-    # ------------------------------------------------------------------
     def reset(self, seed=None, options=None):
-        obs_dict, info_dict = self._pz_env.reset(seed=seed, options=options)
-        self._agents = list(obs_dict.keys())
+        result = self._pz_env.reset(seed=seed, options=options)
+        if isinstance(result, tuple) and len(result) >= 1:
+            obs_dict = result[0]
+        else:
+            obs_dict = result
+        self._agents = sorted(obs_dict.keys()) if obs_dict else []
         obs = self._flatten_obs(obs_dict)
         return obs, {}
 
@@ -83,32 +125,28 @@ class SumoGridEnv(gym.Env):
             agent: int(action[i])
             for i, agent in enumerate(self._agents)
         }
-        obs_dict, rew_dict, term_dict, trunc_dict, info_dict = (
-            self._pz_env.step(action_dict)
-        )
-        obs        = self._flatten_obs(obs_dict)
-        reward     = float(sum(rew_dict.values()))
-        terminated = all(term_dict.values())
-        truncated  = all(trunc_dict.values())
+        result = self._pz_env.step(action_dict)
+        if isinstance(result, tuple) and len(result) >= 5:
+            obs_dict, rew_dict, term_dict, trunc_dict = result[:4]
+        else:
+            obs_dict, rew_dict, term_dict, trunc_dict = result, {}, {}, {}
+        obs        = self._flatten_obs(obs_dict or {})
+        reward     = float(sum(rew_dict.values())) if rew_dict else 0.0
+        terminated = all(term_dict.values()) if term_dict else False
+        truncated  = all(trunc_dict.values()) if trunc_dict else False
         return obs, reward, terminated, truncated, {}
 
     def close(self):
         self._pz_env.close()
 
-    # ------------------------------------------------------------------
     def _flatten_obs(self, obs_dict: dict) -> np.ndarray:
-        """Concatenate per-agent observations into a single flat vector."""
         parts = []
         for agent in self._agents:
             agent_obs = obs_dict.get(agent, np.zeros(9, dtype=np.float32))
-            # sumo-rl obs may have different dim; pad/truncate to 9
-            agent_obs = np.array(agent_obs, dtype=np.float32)
-            if len(agent_obs) < 9:
-                agent_obs = np.pad(agent_obs, (0, 9 - len(agent_obs)))
-            else:
-                agent_obs = agent_obs[:9]
+            agent_obs = np.array(agent_obs, dtype=np.float32).ravel()
+            if len(agent_obs) != 9:
+                agent_obs = np.zeros(9, dtype=np.float32) if len(agent_obs) != 9 else agent_obs
             parts.append(agent_obs)
-        # Pad to exactly 16 agents if fewer are active
         while len(parts) < self.N_INTERSECTIONS:
             parts.append(np.zeros(9, dtype=np.float32))
         return np.concatenate(parts[:self.N_INTERSECTIONS]).astype(np.float32)
