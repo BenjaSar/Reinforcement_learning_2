@@ -12,4 +12,7 @@
 __pycache__/
 *.pyc
 
+# Ignore the .pytest_cache directory
+.pytest_cache/
+
 

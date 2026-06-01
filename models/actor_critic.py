@@ -130,6 +130,12 @@ class SharedActorCritic(nn.Module):
         ], dim=-1)
         return actions, log_probs, value
 
+    def act_deterministic(self, obs: torch.Tensor) -> torch.Tensor:
+        """Return argmax actions (deterministic) for evaluation."""
+        distributions, _ = self.forward(obs)
+        actions = torch.stack([d.probs.argmax(dim=-1) for d in distributions], dim=-1)
+        return actions
+
     # ------------------------------------------------------------------
     def evaluate_actions(
         self,

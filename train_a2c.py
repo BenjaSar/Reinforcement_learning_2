@@ -28,6 +28,7 @@ from envs.traffic_grid_env import make_vec_env
 from models.actor_critic import SharedActorCritic
 from algorithms.a2c import A2CTrainer
 from utils.logger import MetricLogger
+from utils import set_seed
 
 
 def parse_args():
@@ -87,8 +88,7 @@ def random_policy_baseline(n_episodes: int = 10, seed: int = 0) -> dict:
 
 def main():
     args = parse_args()
-    torch.manual_seed(args.seed)
-    np.random.seed(args.seed)
+    set_seed(args.seed)
 
     print("=" * 60)
     print("  Phase 2 — Baseline A2C Training")

@@ -10,9 +10,17 @@ numpy>=1.24.0
 matplotlib>=3.7.0
 tensorboard>=2.14.0
 
+# Streamlit UI (app/streamlit_app.py)
+streamlit>=1.30.0
+plotly>=5.18.0
+
 # Optional: Jupyter notebook support
 jupyter>=1.0.0
 ipykernel>=6.0.0
+
+# Testing
+pytest>=8.0.0
+pytest-timeout>=2.3.0
 
 # Optional: SUMO traffic simulator wrapper
 # Requires SUMO installed separately (https://eclipse.dev/sumo/)

@@ -56,13 +56,11 @@ class MultiIntersectionEnv(gym.Env):
         episode_steps: int = DEFAULT_EPISODE_STEPS,
         min_green: int = MIN_GREEN,
         seed: Optional[int] = None,
-        reward_shaping: bool = True,
     ):
         super().__init__()
         self.demand_factor   = demand_factor
         self.episode_steps   = episode_steps
         self.min_green       = min_green
-        self.reward_shaping  = reward_shaping
 
         # Observation: 144-dim continuous [0, 1]^144
         self.observation_space = spaces.Box(
@@ -151,9 +149,7 @@ class MultiIntersectionEnv(gym.Env):
         waiting_penalty = self._waiting.sum() / total_lanes
         reward = -queue_penalty - 0.1 * waiting_penalty
 
-        # Optional dense shaping: small bonus for any queue reduction
-        if self.reward_shaping:
-            pass  # shaping handled externally via delta reward in curriculum
+        # (No extra shaping; the raw queue+waiting penalty is the reward)
 
         self._step_count += 1
         terminated = False
@@ -199,6 +195,24 @@ class MultiIntersectionEnv(gym.Env):
         }
 
     # ------------------------------------------------------------------
+    # Public accessors (replaces raw attribute access from external code)
+    # ------------------------------------------------------------------
+
+    @property
+    def queues(self) -> np.ndarray:
+        """Current queue lengths per lane, shape (16, 4)."""
+        return self._queues.copy()
+
+    @property
+    def current_phases(self) -> np.ndarray:
+        """Current active phase per intersection, shape (16,)."""
+        return self._current_phase.copy()
+
+    @property
+    def step_count(self) -> int:
+        return self._step_count
+
+    # ------------------------------------------------------------------
     # Convenience setters (used by curriculum scheduler)
     # ------------------------------------------------------------------
 
@@ -214,7 +228,6 @@ def make_env(
     demand_factor: float = 1.0,
     episode_steps: int = DEFAULT_EPISODE_STEPS,
     seed: Optional[int] = None,
-    reward_shaping: bool = True,
 ):
     """Return a callable that creates a fresh MultiIntersectionEnv."""
     def _init():
@@ -222,7 +235,6 @@ def make_env(
             demand_factor=demand_factor,
             episode_steps=episode_steps,
             seed=seed,
-            reward_shaping=reward_shaping,
         )
         return env
     return _init
@@ -233,7 +245,6 @@ def make_vec_env(
     demand_factor: float = 1.0,
     episode_steps: int = DEFAULT_EPISODE_STEPS,
     base_seed: int = 0,
-    reward_shaping: bool = True,
 ) -> gym.vector.SyncVectorEnv:
     """
     Create a SyncVectorEnv with n_envs independent MultiIntersectionEnv instances.
@@ -244,7 +255,6 @@ def make_vec_env(
             demand_factor=demand_factor,
             episode_steps=episode_steps,
             seed=base_seed + i,
-            reward_shaping=reward_shaping,
         )
         for i in range(n_envs)
     ]
